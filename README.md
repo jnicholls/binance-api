@@ -1,5 +1,5 @@
 # binance-api
-An async, type-safe Rust library for the Binance Spot and Futures APIs.
+An async, strongly-typed Rust library for the Binance Spot and Futures APIs.
 
 This library is a personal project that I have decided to release publicly. There is a lot to do! *Please consider it __experimental__ at this time.*
 
