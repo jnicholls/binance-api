@@ -12,6 +12,7 @@ This library is a personal project that I have decided to release publicly. Ther
 * [ ] Unit tests with deterministic replay (e.g. something akin to Ruby's [VCR](https://github.com/vcr/vcr))
 * [ ] GitHub Actions CI setup
 * [ ] All the cool badges (link to docs, CI status, MSRV, etc.)
+* [ ] Open source some of my higher-level APIs (e.g. in-memory OrderBook)
 * [ ] Provide bridges to async-std and smog async runtimes
 
 ## Installation
