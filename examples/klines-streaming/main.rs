@@ -11,18 +11,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Subscribe to BTCUSDT minutely klines data in real-time as the closing price for the current minute is updated.
     client
-        .send_request(
-            WSRequest::new(WSRequestMethod::Subscribe)
-                .stream(WSStream::Kline("BTCUSDT", ChartInterval::OneMinute)),
-        )
+        .subscribe(WSStream::Kline("BTCUSDT", ChartInterval::OneMinute))
         .await?;
-
     // Also subscribe to XRPUSDT.
     client
-        .send_request(
-            WSRequest::new(WSRequestMethod::Subscribe)
-                .stream(WSStream::Kline("XRPUSDT", ChartInterval::OneMinute)),
-        )
+        .subscribe(WSStream::Kline("XRPUSDT", ChartInterval::OneMinute))
         .await?;
 
     // On each klines event, print out the event data.

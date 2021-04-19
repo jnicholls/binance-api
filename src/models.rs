@@ -1536,7 +1536,7 @@ pub struct WSRequest {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     params: Vec<serde_json::Value>,
     #[serde(skip)]
-    pub(crate) timeout: Duration,
+    pub(crate) timeout: Option<Duration>,
 }
 
 impl WSRequest {
@@ -1545,7 +1545,7 @@ impl WSRequest {
             id: None,
             method,
             params: Vec::new(),
-            timeout: Default::default(),
+            timeout: None,
         }
     }
 
@@ -1582,7 +1582,7 @@ impl WSRequest {
     }
 
     pub fn timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
+        self.timeout = Some(timeout);
         self
     }
 }

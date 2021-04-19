@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::marker::{PhantomData, Unpin};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_tungstenite::{
     tokio::{connect_async, ConnectStream},
@@ -14,7 +15,7 @@ use futures::{
     stream::{SplitSink, SplitStream, Stream, StreamExt},
     task::{Context, Poll},
 };
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, Serialize};
 use tokio::{
     sync::{mpsc, oneshot},
     time,
@@ -22,6 +23,7 @@ use tokio::{
 
 use crate::{error::*, extensions::*, models::*};
 
+const WS_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const WSSAPI_HOST: &str = "wss://stream.binance.com:9443/ws/";
 const WSFAPI_HOST: &str = "wss://fstream.binance.com/ws/";
 
@@ -57,29 +59,27 @@ where
                     if let Some(msg) = next {
                         match msg {
                             Ok(msg) => match msg {
-                                Message::Text(t) => {
-                                    match serde_json::from_str(&t).map_err(Into::into) {
-                                        Ok(msg) => match msg {
-                                            WSMessage::Event(event) => {
-                                                let _ = self.event_tx.send(Ok(event)).await;
-                                            }
-                                            WSMessage::Response(resp) => {
-                                                let tx = {
-                                                    let mut state = self.state.lock().unwrap();
-                                                    state.requests.remove(&resp.id)
-                                                };
-                                                if let Some(tx) = tx {
-                                                    let _ = tx.send(Ok(resp));
-                                                }
-                                            }
-                                            _ => (),
-                                        },
-                                        Err(e) => {
-                                            let _ = self.event_tx.send(Err(e)).await;
-                                            break;
+                                Message::Text(t) => match serde_json::from_str(&t) {
+                                    Ok(msg) => match msg {
+                                        WSMessage::Event(event) => {
+                                            let _ = self.event_tx.send(Ok(event)).await;
                                         }
+                                        WSMessage::Response(resp) => {
+                                            let tx = {
+                                                let mut state = self.state.lock().unwrap();
+                                                state.requests.remove(&resp.id)
+                                            };
+                                            if let Some(tx) = tx {
+                                                let _ = tx.send(Ok(resp));
+                                            }
+                                        }
+                                        _ => (),
+                                    },
+                                    Err(e) => {
+                                        let _ = self.event_tx.send(Err(e.into())).await;
+                                        break;
                                     }
-                                }
+                                },
                                 Message::Ping(p) => {
                                     let _ = self.request_tx.send(WSMessage::Pong(p)).await;
                                 }
@@ -211,21 +211,7 @@ where
         ))
     }
 
-    pub fn close(self) {
-        let _ = self.close_tx.send(());
-    }
-
-    pub fn is_closed(&self) -> bool {
-        let state = self.state.lock().unwrap();
-        state.is_closed
-    }
-
-    pub async fn market() -> Result<(Self, WSClientStream<A>), WSApiCode> {
-        let stream: Option<WSStream<&str>> = None;
-        Self::connect(stream).await
-    }
-
-    pub async fn send_request(&self, mut req: WSRequest) -> Result<WSResponse, WSApiCode> {
+    async fn send_request(&self, mut req: WSRequest) -> Result<WSResponse, WSApiCode> {
         let timeout = req.timeout;
         let (tx, rx) = oneshot::channel();
         {
@@ -240,24 +226,27 @@ where
             state.next_id += 1;
         }
 
-        let request_tx = self.request_tx.clone();
-        let _ = request_tx.send(WSMessage::Request(req)).await;
+        let _ = self.request_tx.send(WSMessage::Request(req)).await;
 
         let wait_for_result =
             rx.map(|r| r.map_err(|_| Error::WebsocketRequestCancelled).x_flatten());
-        let timeout = if timeout == Default::default() {
-            Either::Left(future::pending::<()>())
-        } else {
-            Either::Right(time::sleep(timeout))
+
+        let wait_for_timeout = match timeout {
+            Some(timeout) => Either::Left(time::sleep(timeout)),
+            None => Either::Right(future::pending::<()>()),
         }
         .map(|_| Err(Error::WebsocketRequestTimeout));
+        futures::pin_mut!(wait_for_timeout);
 
-        futures::pin_mut!(timeout);
-
-        match future::select(wait_for_result, timeout).await {
+        match future::select(wait_for_result, wait_for_timeout).await {
             Either::Left((result, _)) => result,
             Either::Right((timeout, _)) => timeout,
         }
+    }
+
+    pub async fn market() -> Result<(Self, WSClientStream<A>), WSApiCode> {
+        let stream: Option<WSStream<&str>> = None;
+        Self::connect(stream).await
     }
 
     pub async fn user_data<S>(listen_key: S) -> Result<(Self, WSClientStream<A>), WSApiCode>
@@ -265,6 +254,71 @@ where
         S: AsRef<str>,
     {
         Self::connect(Some(WSStream::UserData(listen_key))).await
+    }
+
+    pub fn close(self) {
+        let _ = self.close_tx.send(());
+    }
+
+    pub fn is_closed(&self) -> bool {
+        let state = self.state.lock().unwrap();
+        state.is_closed
+    }
+
+    pub async fn subscribe<S>(&self, stream: WSStream<S>) -> Result<WSResponse, WSApiCode>
+    where
+        S: AsRef<str>,
+    {
+        self.send_request(
+            WSRequest::new(WSRequestMethod::Subscribe)
+                .stream(stream)
+                .timeout(WS_REQUEST_TIMEOUT),
+        )
+        .await
+    }
+
+    pub async fn unsubscribe<S>(&self, stream: WSStream<S>) -> Result<WSResponse, WSApiCode>
+    where
+        S: AsRef<str>,
+    {
+        self.send_request(
+            WSRequest::new(WSRequestMethod::Unsubscribe)
+                .stream(stream)
+                .timeout(WS_REQUEST_TIMEOUT),
+        )
+        .await
+    }
+
+    pub async fn list_subscriptions(&self) -> Result<WSResponse, WSApiCode> {
+        self.send_request(
+            WSRequest::new(WSRequestMethod::ListSubscriptions).timeout(WS_REQUEST_TIMEOUT),
+        )
+        .await
+    }
+
+    pub async fn get_property<S>(&self, property: S) -> Result<WSResponse, WSApiCode>
+    where
+        S: AsRef<str>,
+    {
+        self.send_request(
+            WSRequest::new(WSRequestMethod::GetProperty)
+                .get_property(property)
+                .timeout(WS_REQUEST_TIMEOUT),
+        )
+        .await
+    }
+
+    pub async fn set_property<S, T>(&self, property: S, value: T) -> Result<WSResponse, WSApiCode>
+    where
+        S: AsRef<str>,
+        T: Serialize,
+    {
+        self.send_request(
+            WSRequest::new(WSRequestMethod::SetProperty)
+                .set_property(property, value)
+                .timeout(WS_REQUEST_TIMEOUT),
+        )
+        .await
     }
 }
 
