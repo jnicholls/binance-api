@@ -1,4 +1,4 @@
-use futures::task::Poll;
+use std::task::Poll;
 
 #[easy_ext::ext(ResultExt)]
 impl<T, E> Result<Result<T, E>, E> {

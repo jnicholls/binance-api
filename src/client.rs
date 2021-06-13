@@ -41,7 +41,7 @@ impl Credentials {
     }
 
     fn sign(&self, data: impl AsRef<[u8]>) -> String {
-        let mut hmac = Hmac::<Sha256>::new_varkey(self.secret_key.as_bytes())
+        let mut hmac = Hmac::<Sha256>::new_from_slice(self.secret_key.as_bytes())
             .expect("secret_key should be of the correct byte length");
         hmac.update(data.as_ref());
         hex::encode(hmac.finalize().into_bytes())

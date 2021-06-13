@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::marker::{PhantomData, Unpin};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use async_tungstenite::{
@@ -13,7 +14,6 @@ use futures::{
     future::{self, Either, FutureExt},
     sink::SinkExt,
     stream::{SplitSink, SplitStream, Stream, StreamExt},
-    task::{Context, Poll},
 };
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::{
